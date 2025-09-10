@@ -1,7 +1,8 @@
-pydantic==2.6.6
-fastapi==0.114.0
-langgraph==0.0.35
-langchain-core==0.1.40
-langchain-openai==0.0.7
-openai==1.33.0
-
+pydantic==2.6.1
+fastapi==0.104.1
+langgraph==0.0.42
+langchain-core==0.1.33
+langchain-openai==0.0.8
+openai==1.35.9
+python-dotenv==1.0.0
+uvicorn==0.29.0
