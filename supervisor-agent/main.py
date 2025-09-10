@@ -11,12 +11,14 @@ from pydantic import BaseModel,Field
 from langgraph.types import Command,interrupt
 from dotenv import load_dotenv
 import os
+from fastapi import FastAPI
 
+app = FastAPI()
 load_dotenv()
 openAI_key = os.getenv("OPENAI_API_KEY")
 llm = init_chat_model("openai:gpt-4.1")
 
-class state(TypedDict):
+class state(BaseModel):
     user_input: str
     messages : Annotated[list[AnyMessage],add_messages]
     interrupt : str
@@ -31,20 +33,20 @@ memory = InMemorySaver()
 def positive_node(state:state):
     positive_comment = llm.invoke( state["messages"] +[
         SystemMessage(content="generate an appreciative,short and concise feedback based on the positive review"),
-        HumanMessage(content=state["user_input"])
+        HumanMessage(content=state.user_input)
         ])
     return {"messages": [AIMessage(content=positive_comment.content)]}
     
 def negative_node(state:state):
     negative_comment = llm.invoke(state["messages"] +[
         SystemMessage(content="generate an apology for the review and promise to improve"),
-        HumanMessage(content=state["user_input"])
+        HumanMessage(content=state.user_input)
         ])
     return{"messages": [AIMessage(content=negative_comment.content)]}
     
 def neutral_node(state:state):
        neg = llm.invoke(state["messages"] +[SystemMessage(content="generate a neutral c omment"),
-        HumanMessage(content=state["user_input"])
+        HumanMessage(content=state.user_input)
         ])
        return{ "messages" : [AIMessage(content=neg.content)]}
    
@@ -52,13 +54,13 @@ def human_approval(state: state):
     # Ask for human approval BEFORE sending response
     return interrupt({
         "question": "Do you approve this message? (approve/disapprove)",
-        "generated_message": state["messages"][-1].content
+        "generated_message": state.messages[-1].content
     })
 
     
     
 def routerDecision(state:state):
-    decision= llm_router.invoke(state["user_input"])
+    decision= llm_router.invoke(state.user_input)
     if decision.classification == "positive":
         return "positive_node"
     elif decision.classification == "negative":
@@ -88,31 +90,25 @@ builder.add_edge("neutral_node",END)
 config={"configurable": {"thread_id" :"1"}}
 result = builder.compile(checkpointer=memory)
 
-while True:
-    user_input = input("\nAI: Ask me anything (or type 'quit' to exit)\nUSER: ")
-
-    if user_input.lower() in ['quit', 'exit', 'bye']:
-        print("Goodbye!")
-        break
-
-    app = result.invoke(
-        {"user_input": user_input, "interupt": "", "messages": [HumanMessage(content=user_input)]},
-        config
-    )
-
-
-while True:
-    user_input = input("\nAI: Ask me anything (or type 'quit' to exit)\nUSER: ")
-    
-    if user_input.lower() in ['quit', 'exit', 'bye']:
-        print("Goodbye!")
-        break
-    app = result.invoke({"user_input": user_input, "interupt": "",
-                         "messages": [HumanMessage(content=user_input)]
+@app.post("/start/")
+def app_func(request :state): 
+    response = result.invoke({"user_input": request.user_input,
+                          "interrupt": request.user_input,
+                         "messages": [HumanMessage(content=request.user_input)]
                          },
                         config)
-    print(app["messages"][-1].content)
-    print(app["__interrupt__"])
-    
-    resume_command = Command(resume=input("approve" "or" "disapprove"))
-    app= result.invoke(resume_command,config)
+    return {
+        "agent_response": response["messages"][-1].content,
+        "interrupt": response.get("__interrupt__"),
+        "messages": response.get("messages")
+    }
+
+@app.post("/resume/")
+def resume_feedback(request : state):
+    resume_command = Command(resume=request.user_input)
+    response = result.invoke(resume_command, config)
+    return {
+        "agent_response": response["messages"][-1].content,
+        "messages": response.get("messages", [])
+    }
+
